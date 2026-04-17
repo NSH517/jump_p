@@ -1,22 +1,14 @@
 import 'dart:math';
-import 'package:flame/input.dart';
-import 'package:flutter/material.dart';
 import 'package:flame/game.dart';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
+import 'package:flame/input.dart';
+import 'package:flutter/material.dart';
+import 'package:jump_p/player.dart';
 
-import '../player.dart';
+import 'platform.dart';
+import 'platform_type.dart';
 
-// ================= PLATFORM =================
-class Platform extends RectangleComponent {
-  Platform()
-      : super(
-          size: Vector2(80, 15),
-          paint: Paint()..color = const Color(0xFF8B4513),
-        );
-}
-
-// ================= GAME =================
 class JumpGame extends FlameGame with TapDetector {
   final Random rand = Random();
 
@@ -24,6 +16,7 @@ class JumpGame extends FlameGame with TapDetector {
   final List<Platform> platforms = [];
 
   Vector2 velocity = Vector2.zero();
+
   final double gravity = 900;
   final double jumpPower = -600;
 
@@ -41,6 +34,7 @@ class JumpGame extends FlameGame with TapDetector {
     _reset();
   }
 
+  // ================= RESET =================
   void _reset() {
     removeAll(children);
     platforms.clear();
@@ -57,24 +51,41 @@ class JumpGame extends FlameGame with TapDetector {
 
     add(player);
 
-    final startPlatform = Platform()
-      ..position = Vector2(size.x / 2 - 40, size.y - 80);
+    final startPlatform = Platform.normal(
+  position: Vector2(
+    size.x / 2 - 40,
+    size.y - 40, // 👈 화면 거의 바닥에 붙여줌
+  ),
+);
 
     platforms.add(startPlatform);
     add(startPlatform);
 
     for (int i = 0; i < 9; i++) {
-      final p = Platform()
-        ..position = Vector2(
-          rand.nextDouble() * (size.x - 80),
-          size.y - i * 120,
-        );
+      final p = _createPlatform(
+        rand.nextDouble() * (size.x - 80),
+        size.y - i * 120,
+      );
 
       platforms.add(p);
       add(p);
     }
   }
 
+  // ================= FACTORY =================
+  Platform _createPlatform(double x, double y) {
+    final r = rand.nextDouble();
+
+    if (r < 0.7) {
+      return Platform.normal(position: Vector2(x, y));
+    } else if (r < 0.85) {
+      return Platform.jumpBoost(position: Vector2(x, y));
+    } else {
+      return Platform.breakable(position: Vector2(x, y));
+    }
+  }
+
+  // ================= UPDATE =================
   @override
   void update(double dt) {
     super.update(dt);
@@ -89,8 +100,9 @@ class JumpGame extends FlameGame with TapDetector {
     if (player.position.x < 0) player.position.x = size.x;
     if (player.position.x > size.x) player.position.x = 0;
 
+    // scroll
     if (player.position.y < size.y * 0.4) {
-      double diff = (size.y * 0.4) - player.position.y;
+      final diff = (size.y * 0.4) - player.position.y;
 
       player.position.y = size.y * 0.4;
 
@@ -102,25 +114,48 @@ class JumpGame extends FlameGame with TapDetector {
       }
     }
 
+    // 충돌
     for (final p in platforms) {
       if (player.toRect().overlaps(p.toRect()) && velocity.y > 0) {
-        velocity.y = jumpPower;
+        switch (p.type) {
+          case PlatformType.normal:
+            velocity.y = jumpPower;
+            break;
+
+          case PlatformType.jumpBoost:
+            velocity.y = jumpPower * 1.5;
+            break;
+
+          case PlatformType.breakable:
+            velocity.y = jumpPower;
+            p.removeFromParent();
+            break;
+        }
+
+        break; // 한 번만 충돌
       }
     }
 
+    // 재사용
     for (final p in platforms) {
+      if (!p.isMounted) continue;
+
       if (p.position.y > size.y) {
         p.position.y = -50;
         p.position.x = rand.nextDouble() * (size.x - 80);
       }
     }
 
+    // 게임오버
     if (player.position.y > size.y + 200) {
       gameOver.value = true;
       pauseEngine();
     }
+
+    platforms.removeWhere((p) => p.isRemoved);
   }
 
+  // ================= INPUT =================
   @override
   void onTapDown(TapDownInfo info) {
     direction = info.eventPosition.global.x < size.x / 2 ? -1 : 1;
@@ -131,97 +166,9 @@ class JumpGame extends FlameGame with TapDetector {
     direction = 0;
   }
 
+  // ================= RESET =================
   void resetGame() {
     resumeEngine();
     _reset();
-  }
-}
-
-// ================= GAME PAGE UI =================
-class GamePage extends StatefulWidget {
-  const GamePage({super.key});
-
-  @override
-  State<GamePage> createState() => _GamePageState();
-}
-
-class _GamePageState extends State<GamePage> {
-  late final JumpGame game;
-
-  @override
-  void initState() {
-    super.initState();
-    game = JumpGame();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          GameWidget(game: game),
-
-          ValueListenableBuilder<bool>(
-            valueListenable: game.gameOver,
-            builder: (context, over, _) {
-              if (!over) return const SizedBox.shrink();
-
-              return Container(
-                color: Colors.black54,
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        "GAME OVER",
-                        style: TextStyle(
-                          fontSize: 40,
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      ValueListenableBuilder<int>(
-                        valueListenable: game.score,
-                        builder: (context, value, _) {
-                          return Text(
-                            "Score: $value",
-                            style: const TextStyle(
-                              fontSize: 24,
-                              color: Colors.white,
-                            ),
-                          );
-                        },
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      ElevatedButton(
-                        onPressed: game.resetGame,
-                        child: const Text("RESTART"),
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                        },
-                        child: const Text(
-                          "BACK",
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
   }
 }
